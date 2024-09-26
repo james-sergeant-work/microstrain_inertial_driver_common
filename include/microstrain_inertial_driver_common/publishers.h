@@ -235,8 +235,10 @@ public:
 
   // IMU Publishers
   Publisher<ImuMsg>::SharedPtr                        imu_raw_pub_     = Publisher<ImuMsg>::initialize(IMU_DATA_RAW_TOPIC);
+  Publisher<TimeReferenceMsg>::SharedPtr              raw_pps_time_pub_    = Publisher<TimeReferenceMsg>::initialize(IMU_PPS_RAW_TOPIC);
   Publisher<ImuMsg>::SharedPtr                        imu_pub_         = Publisher<ImuMsg>::initialize(IMU_DATA_TOPIC);
   Publisher<MagneticFieldMsg>::SharedPtr              mag_pub_         = Publisher<MagneticFieldMsg>::initialize(IMU_MAG_TOPIC);
+  Publisher<TimeReferenceMsg>::SharedPtr              pps_time_pub_    = Publisher<TimeReferenceMsg>::initialize(IMU_PPS_TOPIC);
   Publisher<FluidPressureMsg>::SharedPtr              pressure_pub_    = Publisher<FluidPressureMsg>::initialize(IMU_PRESSURE_TOPIC);
   Publisher<TwistWithCovarianceStampedMsg>::SharedPtr wheel_speed_pub_ = Publisher<TwistWithCovarianceStampedMsg>::initialize(IMU_WHEEL_SPEED_TOPIC);
 
@@ -403,6 +405,13 @@ private:
   void updateHeaderTime(RosHeaderType* header, uint8_t descriptor_set, mip::Timestamp timestamp);
 
   /**
+   * \brief Returns GpsTimestamp to original PPS source time
+   * \param time The time object to set the time on
+   * \param timestamp The GPS timestamp to use to update the header
+   */
+  static void setPpsTime(RosTimeType* time, const mip::data_shared::GpsTimestamp& timestamp);
+
+  /**
    * \brief Updates the header's timestamp to the UTC representation of the GPS timestamp
    * \param header The time object to set the time on
    * \param timestamp The GPS timestamp to use to update the header
@@ -435,6 +444,14 @@ private:
   // TF2 buffer lookup class
   TransformBufferType transform_buffer_;
   TransformListenerType transform_listener_;
+
+  mip::Timestamp gps_mip_timestamp_; 
+  mip::Timestamp comp_mip_timestamp_;
+  mip::Timestamp delta_theta_mip_timestamp_;
+  mip::Timestamp delta_vel_mip_timestamp_;
+  mip::Timestamp raw_gyro_mip_timestamp_;
+  mip::Timestamp raw_accel_mip_timestamp_;
+
 };
 
 template<void (Publishers::*Callback)(const mip::PacketRef&, mip::Timestamp)>

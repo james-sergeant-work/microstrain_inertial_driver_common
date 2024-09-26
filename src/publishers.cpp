@@ -79,8 +79,10 @@ Publishers::Publishers(RosNodeType* node, Config* config)
 bool Publishers::configure()
 {
   imu_raw_pub_->configure(node_, config_);
+  raw_pps_time_pub_->configure(node_);
   imu_pub_->configure(node_, config_);
   mag_pub_->configure(node_, config_);
+  pps_time_pub_->configure(node_);
   pressure_pub_->configure(node_, config_);
   wheel_speed_pub_->configure(node_, config_);
 
@@ -127,7 +129,9 @@ bool Publishers::configure()
 
   // Frame ID configuration
   imu_raw_pub_->getMessage()->header.frame_id = config_->frame_id_;
+  raw_pps_time_pub_->getMessage()->header.frame_id = config_->frame_id_ + "_pps_valid";
   imu_pub_->getMessage()->header.frame_id = config_->frame_id_;
+  pps_time_pub_->getMessage()->header.frame_id = config_->frame_id_ + "_pps_valid";
   mag_pub_->getMessage()->header.frame_id = config_->frame_id_;
   pressure_pub_->getMessage()->header.frame_id = config_->frame_id_;
   wheel_speed_pub_->getMessage()->header.frame_id = config_->odometer_frame_id_;
@@ -396,7 +400,9 @@ bool Publishers::configure()
 bool Publishers::activate()
 {
   imu_raw_pub_->activate();
+  raw_pps_time_pub_->activate();
   imu_pub_->activate();
+  pps_time_pub_->activate();
   mag_pub_->activate();
   pressure_pub_->activate();
   wheel_speed_pub_->activate();
@@ -457,7 +463,9 @@ bool Publishers::activate()
 bool Publishers::deactivate()
 {
   imu_raw_pub_->deactivate();
+  raw_pps_time_pub_->deactivate();
   imu_pub_->deactivate();
+  pps_time_pub_->deactivate();
   mag_pub_->deactivate();
   pressure_pub_->deactivate();
   wheel_speed_pub_->deactivate();
@@ -498,11 +506,36 @@ bool Publishers::deactivate()
 
 void Publishers::publish()
 {
+  // Set data header stamp to match PPS
+  if (pps_time_pub_->updated() && 
+      imu_pub_->updated() && 
+      gps_mip_timestamp_ == comp_mip_timestamp_ &&
+      gps_mip_timestamp_ == delta_theta_mip_timestamp_ &&
+      gps_mip_timestamp_ == delta_vel_mip_timestamp_)
+  {
+    const auto pps_msg = pps_time_pub_->getMessage();
+    auto imu_msg = imu_pub_->getMessageToUpdate();
+    imu_msg->header.stamp = pps_msg->header.stamp;
+  }
+
+  if (raw_pps_time_pub_->updated() && 
+      imu_raw_pub_->updated() && 
+      gps_mip_timestamp_ == comp_mip_timestamp_ && 
+      gps_mip_timestamp_ == raw_accel_mip_timestamp_ && 
+      gps_mip_timestamp_ == raw_gyro_mip_timestamp_)
+  {
+    const auto pps_msg = raw_pps_time_pub_->getMessage();
+    auto imu_msg = imu_raw_pub_->getMessageToUpdate();
+    imu_msg->header.stamp = pps_msg->header.stamp;
+  }
+  
   // This publish function will get called after each packet is processed.
   // For standard ROS messages this allows us to combine multiple MIP fields and then publish them
   // For custom ROS messages, the messages are published directly in the callbacks
   imu_raw_pub_->publish();
+  raw_pps_time_pub_->publish();
   imu_pub_->publish();
+  pps_time_pub_->publish();
   mag_pub_->publish();
   pressure_pub_->publish();
   wheel_speed_pub_->publish();
@@ -610,6 +643,18 @@ void Publishers::handleSharedGpsTimestamp(const mip::data_shared::GpsTimestamp& 
   // Save the GPS timestamp
   gps_timestamp_mapping_[descriptor_set] = gps_timestamp;
 
+  if (descriptor_set == mip::data_sensor::DESCRIPTOR_SET)
+  {
+    gps_mip_timestamp_ = timestamp;
+    auto pps_time_msg  = pps_time_pub_->getMessageToUpdate();
+    auto raw_pps_time_msg  = raw_pps_time_pub_->getMessageToUpdate();
+    updateHeaderTime(&(pps_time_msg->header), descriptor_set, timestamp);
+    setPpsTime(&pps_time_msg->time_ref, gps_timestamp);
+    raw_pps_time_msg->header.stamp = pps_time_msg->header.stamp;
+    raw_pps_time_msg->time_ref = pps_time_msg->time_ref;
+    return;
+  }
+
   // Update the GPS time message for this descriptor
   uint8_t gnss_index;
   switch (descriptor_set)
@@ -655,6 +700,7 @@ void Publishers::handleSensorGpsTimestamp(const mip::data_sensor::GpsTimestamp& 
 
 void Publishers::handleSensorScaledAccel(const mip::data_sensor::ScaledAccel& scaled_accel, const uint8_t descriptor_set, mip::Timestamp timestamp)
 {
+  raw_accel_mip_timestamp_ = timestamp;
   auto imu_raw_msg = imu_raw_pub_->getMessageToUpdate();
   updateHeaderTime(&(imu_raw_msg->header), descriptor_set, timestamp);
   imu_raw_msg->linear_acceleration.x = USTRAIN_G * scaled_accel.scaled_accel[0];
@@ -669,6 +715,7 @@ void Publishers::handleSensorScaledAccel(const mip::data_sensor::ScaledAccel& sc
 
 void Publishers::handleSensorScaledGyro(const mip::data_sensor::ScaledGyro& scaled_gyro, const uint8_t descriptor_set, mip::Timestamp timestamp)
 {
+  raw_gyro_mip_timestamp_ = timestamp;
   auto imu_raw_msg = imu_raw_pub_->getMessageToUpdate();
   updateHeaderTime(&(imu_raw_msg->header), descriptor_set, timestamp);
   imu_raw_msg->angular_velocity.x = scaled_gyro.scaled_gyro[0];
@@ -683,6 +730,7 @@ void Publishers::handleSensorScaledGyro(const mip::data_sensor::ScaledGyro& scal
 
 void Publishers::handleSensorDeltaTheta(const mip::data_sensor::DeltaTheta& delta_theta, const uint8_t descriptor_set, mip::Timestamp timestamp)
 {
+  delta_theta_mip_timestamp_ = timestamp;
   // Attempt to get the delta time, if we can't find it we will estimate based on the data rate
   float delta_time;
   if (delta_time_mapping_.find(descriptor_set) != delta_time_mapping_.end())
@@ -705,6 +753,7 @@ void Publishers::handleSensorDeltaTheta(const mip::data_sensor::DeltaTheta& delt
 
 void Publishers::handleSensorDeltaVelocity(const mip::data_sensor::DeltaVelocity& delta_velocity, const uint8_t descriptor_set, mip::Timestamp timestamp)
 {
+  delta_vel_mip_timestamp_ = timestamp;
   // Attempt to get the delta time, if we can't find it we will estimate based on the data rate
   float delta_time;
   if (delta_time_mapping_.find(descriptor_set) != delta_time_mapping_.end())
@@ -727,17 +776,21 @@ void Publishers::handleSensorDeltaVelocity(const mip::data_sensor::DeltaVelocity
 void Publishers::handleSensorCompQuaternion(const mip::data_sensor::CompQuaternion& comp_quaternion, const uint8_t descriptor_set, mip::Timestamp timestamp)
 {
   // Rotate the quaternion into the correct frame
+  comp_mip_timestamp_ = timestamp;
   auto imu_msg = imu_pub_->getMessageToUpdate();
+  auto imu_raw_msg = imu_raw_pub_->getMessageToUpdate();
   updateHeaderTime(&(imu_msg->header), descriptor_set, timestamp);
   const tf2::Transform microstrain_vehicle_to_ned_transform_tf(tf2::Quaternion(comp_quaternion.q[1], comp_quaternion.q[2], comp_quaternion.q[3], comp_quaternion.q[0]));
   if (config_->use_enu_frame_)
   {
     const tf2::Transform ros_vehicle_to_enu_transform_tf = config_->ned_to_enu_transform_tf_ * microstrain_vehicle_to_ned_transform_tf * config_->ros_vehicle_to_microstrain_vehicle_transform_tf_;
     imu_msg->orientation = tf2::toMsg(ros_vehicle_to_enu_transform_tf.getRotation());
+    imu_raw_msg->orientation = imu_msg->orientation;
   }
   else
   {
     imu_msg->orientation = tf2::toMsg(microstrain_vehicle_to_ned_transform_tf.getRotation());
+    imu_raw_msg->orientation = imu_msg->orientation;
   }
 }
 
@@ -2099,6 +2152,16 @@ void Publishers::updateHeaderTime(RosHeaderType* header, uint8_t descriptor_set,
 {
   // Set the header time to the current ROS time
   header->stamp = rosTimeNow(node_);
+}
+
+void Publishers::setPpsTime(RosTimeType* time, const mip::data_shared::GpsTimestamp& timestamp)
+{
+  // Split the seconds and subseconds out to get around the double resolution issue
+  double seconds;
+  double subseconds = modf(timestamp.tow, &seconds);
+
+  // Returns GpsTimestamp to original PPS source time
+  setRosTime(time, timestamp.week_number * 604800 + static_cast<uint64_t>(seconds), static_cast<int64_t>(std::floor(subseconds * 1000000000)));
 }
 
 void Publishers::setGpsTime(RosTimeType* time, const mip::data_shared::GpsTimestamp& timestamp)

@@ -27,9 +27,11 @@ namespace microstrain
 {
 
 // Topic names
-static constexpr auto IMU_DATA_RAW_TOPIC = "/imu/data_raw";
+static constexpr auto IMU_DATA_RAW_TOPIC = "raw/imu/data";
+static constexpr auto IMU_PPS_RAW_TOPIC = "raw/imu/pps_timestamp";
 static constexpr auto IMU_DATA_TOPIC = "imu/data";
 static constexpr auto IMU_MAG_TOPIC = "imu/mag";
+static constexpr auto IMU_PPS_TOPIC = "imu/pps_timestamp";
 static constexpr auto IMU_PRESSURE_TOPIC = "imu/pressure";
 static constexpr auto IMU_WHEEL_SPEED_TOPIC = "imu/wheel_speed";
 
